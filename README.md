@@ -56,7 +56,5 @@ A UVM-based verification environment built to verify an AXI protocol slave desig
 - No protocol violations observed for tested scenarios
 
 ## Run It Yourself
-This testbench was simulated on EDA Playground.
-Paste the src/ files into EDA Playground with:
-- Language: SystemVerilog/UVM
-- Simulator: Aldec Riviera-PRO or Cadence Xcelium
+Simulated on EDA Playground — 
+[Click here to view and run the testbench](https://edaplayground.com/x/hShi)
