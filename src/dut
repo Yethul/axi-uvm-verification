@@ -1,0 +1,194 @@
+// Code your design here
+module axi_slave#(
+  parameter addr_width = 32,
+  parameter data_width = 32
+)(
+  input logic aclk,
+  input logic aresetn,
+  
+  /* WRITE ADDRESS */
+  input  logic [addr_width-1:0]    awaddr,
+  input  logic [7:0]               awlen,
+  input  logic [2:0]               awsize,
+  input  logic[1:0]               awburst,
+  input  logic                    awvalid,
+  output logic                     awready,
+
+    /* WRITE DATA */
+  input  logic[data_width-1:0]    wdata,
+  input logic [(data_width/8)-1:0]  wstrb,
+  input  logic                    wvalid,
+  input  logic                    wlast,
+  output logic                     wready,
+
+    /* WRITE RESPONSE */
+  output logic [1:0]               bresp,
+  output logic                    bvalid,
+  input  logic                    bready,
+
+    /* READ ADDRESS */
+  input  logic [addr_width-1:0]    araddr,
+  input  logic [7:0]               arlen,
+  input  logic [2:0]               arsize,
+  input  logic [1:0]               arburst,
+  input  logic                    arvalid,
+  output logic                     arready,
+
+    /* READ DATA */
+  output logic [data_width-1:0]    rdata,
+  output logic [1:0]               rresp,
+  output logic                     rvalid,
+  output logic                     rlast,
+  input  logic                    rready
+);
+  
+  logic [data_width-1:0] mem [0:1023];  //INTERNAL MEMORY OF 1024 WORDS
+  
+  //------------------------------------------------------------------------
+  //                           write fsm
+  //------------------------------------------------------------------------
+  
+  typedef enum logic[1:0]{
+    w_idle,
+    w_data,
+    w_resp
+  }wr_state_fsm;
+  
+  wr_state_fsm w_state;
+  
+  logic[addr_width-1:0] awaddr_l;
+  logic[7:0] awlen_l;
+  logic[2:0] awsize_l;
+  logic[7:0] wcount;
+  
+  always @(posedge aclk or negedge aresetn) begin
+    if(!aresetn) begin
+      w_state <= w_idle;
+      awready <= 0;
+      wready <= 0;
+      bvalid <= 0;
+      bresp <= 2'b00;
+      wcount <= 0;
+    end else begin
+      case(w_state)
+        w_idle : begin
+          awready <= 1;
+          wready <= 0;
+          bvalid <= 0;
+          if(awvalid && awready) begin
+            awaddr_l <= awaddr;
+            awlen_l <= awlen;
+            awsize_l <= awsize;
+            wcount <= 0;
+            
+            if(awburst == 2'b01) begin
+              awready <= 0;
+              wready <= 1;
+              w_state <= w_data;
+            end else begin
+              bresp <= 2'b10; //SLVERR
+              bvalid <= 1;
+              awready <= 0;
+              wready <= 0;
+              w_state <= w_resp;
+            end
+          end
+        end
+        
+        w_data : begin
+          if(wvalid && wready) begin
+            for(int i=0;i<(data_width/8); i++) begin
+              if(wstrb[i])
+                mem[awaddr_l[11:2]][8*i +:8] <= wdata[8*i +:8]; //BYTE WISE WRITE USING WSTRB
+            end
+            awaddr_l <= awaddr_l +(1<<awsize_l); //ADDRESS INCREMENT PER BEAT
+            
+            if(wlast || (wcount == awlen_l)) begin
+              wready <= 0;
+              bvalid <= 1;
+              w_state <= w_resp;
+            end else begin
+              wcount <= wcount + 1;
+            end
+          end
+        end
+        
+        w_resp : begin
+          bresp <= 2'b00;
+          if(bvalid && bready) begin
+            bvalid <= 0;
+            w_state <= w_idle;
+          end
+        end
+      endcase
+    end
+  end
+  
+  //--------------------------------------------------------------------------
+  //                                read fsm  
+  //--------------------------------------------------------------------------
+  
+  typedef enum logic[1:0]{
+    r_idle,
+    r_data    
+  }rd_state_fsm;
+  
+  rd_state_fsm r_state;
+  
+  logic[addr_width-1:0] araddr_l;
+  logic[7:0] arlen_l;
+  logic[2:0] arsize_l;
+  logic[7:0] rcount;
+  
+  always @(posedge aclk or negedge aresetn) begin
+    if(!aresetn) begin
+      r_state <= r_idle;
+      arready <= 0;
+      rdata <= 32'h0;
+      rvalid <= 0;
+      rlast <= 0;
+      rresp <= 2'b00;
+      rcount <= 0;
+    end else begin
+      case (r_state)
+        r_idle : begin
+          arready <= 1;
+          rvalid <= 0;
+          rlast <= 0;
+          
+          if(arvalid && arready) begin
+            araddr_l <= araddr;
+            arlen_l <= arlen;
+            arsize_l <= arsize;
+            rcount <= 0;
+            arready <= 0;
+            
+            if(arburst == 2'b01) begin
+              r_state = r_data;
+            end else begin
+              rresp <= 2'b10;
+              rvalid <= 1;
+              rlast <= 1'b1;
+              r_state <= r_idle;
+            end
+          end
+        end
+        
+        r_data : begin
+          if(!rvalid || (rvalid && rready)) begin
+            rdata <= mem[araddr_l[11:2]]; //send data from memory
+            rresp <= 2'b00;
+            rvalid <= 1;
+            rlast <= (rcount == arlen_l);
+            araddr_l <= araddr_l +(1<<arsize_l);
+            
+            if(rcount == arlen_l && rready && rvalid)
+              r_state <= r_idle;
+            else
+              rcount <= rcount+1;
+          end
+        end
+      endcase
+    end
+  end
+endmodule
